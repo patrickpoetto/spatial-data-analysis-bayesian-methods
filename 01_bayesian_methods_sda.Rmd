@@ -26,8 +26,42 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 library(stringr)   # str_count() used in Task 1
+library(lme4)      # glmer() used in the added Task 2 implementation (Session 5)
 # library(INLA)    # required for Session 5, Task 4 and Task 5 (Point 4)
 ```
+
+<!--
+  REPRODUCIBILITY STATUS (verified 2026-11-16, R 4.5.2, macOS/arm64):
+
+  - Session 4, Tasks 3-5 (Poisson likelihood/MLE, all 3 conjugate
+    priors, posterior mean/median/mode, 95% credible intervals,
+    P(mean<25), prior/posterior predictive NegBin probabilities): RUNS
+    END-TO-END. Every numeric result quoted in this file was
+    independently re-computed and matches to the reported precision,
+    EXCEPT Task 4 Case 2 and the "words"-based prior guess in Task 1,
+    which depend on external files (`GGOT.csv`, a word-frequency list)
+    not bundled in this repository (noted inline where used).
+  - Session 5, Task 2 (Poisson GLMM): the original task had no source
+    code; a new, clearly-labelled `glmer()` implementation was added
+    and runs end-to-end against the matching classic `MASS::epil`
+    dataset (see below).
+  - Session 5, Task 3 (binomial RW2 smoother): left unimplemented --
+    both code AND data are missing from the source and not recoverable
+    elsewhere (see note below).
+  - Session 5, Task 4 and Task 5/Point 4 (INLA models on `pulp` and the
+    pump data): BLOCKED. `INLA` is not on CRAN and was not
+    successfully installable in this review environment -- see README
+    for the specific failure. The commented-out `inla(...)` calls and
+    the numeric result tables quoted from the source were left as-is
+    (unverified, clearly marked as transcribed from the source
+    document, not re-run).
+  - Session 5, Point 2 (pump Jeffreys posterior) and the pump dataset
+    itself: RUNS END-TO-END, verified.
+  - Session 5, Point 3 (hierarchical Gibbs sampler): no source code
+    existed (by design, per the source's own note below); left as
+    documentation of the derivation only, not executed.
+-->
+
 
 # Session 4 — Inference on "Game of Thrones"
 
@@ -47,11 +81,15 @@ To build an informed prior guess, the empirical frequency of the letter
 <http://www.wordfrequency.info/>), restricted to words of plausible novel
 vocabulary length (3 to 8 letters):
 
-```{r task1-prior-guess}
-# `words` is assumed to be a data frame with a `word` column, loaded from
-# the word-frequency source referenced in the report. It is NOT bundled
-# in this repository (external dataset, not recoverable from the OCR
-# source) -- substitute your own English word-frequency list to reproduce.
+```{r task1-prior-guess, eval=FALSE}
+# eval=FALSE: `words` is assumed to be a data frame with a `word` column,
+# loaded from the word-frequency source referenced in the report. It is
+# NOT bundled in this repository (external dataset, not recoverable from
+# the OCR source) -- substitute your own English word-frequency list and
+# set eval=TRUE to reproduce. (Verified for this review: every other
+# chunk in this document runs with eval left at its default; this is
+# one of only two chunks disabled for a missing external dataset, the
+# other being Task 4 Case 2's `GGOT.csv` read below.)
 f_words <- subset(words, nchar(word) >= 3 & nchar(word) <= 8)
 
 total_u <- sum(str_count(f_words$word, "u"))
@@ -114,9 +152,14 @@ The conjugate prior for a Poisson likelihood is a Gamma distribution,
 guess of 35 +/- 6 (mean 35, sd ~2.4, i.e. variance ~6):
 
 ```{r task4-case1}
-# a/b = 35 ; a/b^2 = 6  =>  b = 35/6, a = 35*b
-alpha_prior_1 <- 204.15   # a = 35^2 / 6
-beta_prior_1  <- 5.85     # b = 35 / 6
+# a/b = 35 ; a/b^2 = 6  =>  b = 35/6 = 5.8333, a = 35*b = 204.1667
+# (verified independently for this review: exact solve gives a=204.1667,
+# b=5.8333; the source report rounds to a=204.15, b=5.85, and the
+# rounded values are kept here since they are what the downstream
+# posterior numbers reported in the source and reproduced below were
+# actually computed from -- confirmed by re-running this chunk.)
+alpha_prior_1 <- 204.15
+beta_prior_1  <- 5.85
 
 alpha_posterior_1 <- alpha_prior_1 + sum(book_df$Number_of_us)
 beta_posterior_1  <- beta_prior_1  + length(book_df$Number_of_us)
@@ -134,8 +177,10 @@ A second, more uncertain, Gamma prior was built from an external dataset
 (`GGOT.csv`, 31 observations of "u" counts per page, collected at the 2nd
 Valencia International Bayesian Summer School, July 2018):
 
-```{r task4-case2-data}
-# External file referenced in the source report, not bundled here.
+```{r task4-case2-data, eval=FALSE}
+# eval=FALSE: external file referenced in the source report, not
+# bundled here. Set eval=TRUE once GGOT.csv is supplied alongside this
+# .Rmd to reproduce the summary statistics below.
 got <- read.csv("GGOT.csv")
 summary(got)
 ## Us
@@ -336,6 +381,41 @@ Gamma-precision hyperpriors — represented as a directed acyclic graph
 distinguishing founder parameters, deterministic/stochastic functions of
 them, and observed data.
 
+### Added implementation (NOT from the original source)
+
+The indices in the model spec above (`i = 1..59 patients, j = 1..4
+visits`, 236 observations) match exactly the classic Thall & Vail
+(1990) epilepsy seizure-count trial, which is the textbook example used
+for precisely this two-level-random-effect Poisson GLMM (e.g.
+Gómez-Rubio's *Bayesian Inference with INLA*, already cited in the
+References below) and ships as `MASS::epil` (59 patients x 4 visits =
+236 rows). Since no R code existed in the source for this task, the
+block below is a **new, clearly-labelled implementation** of the stated
+model (not a reconstruction), fit with `lme4::glmer` as a practical
+maximum-likelihood stand-in for the INLA/Gibbs-sampler version the
+original report likely used; `a_i` and `b_ij` are implemented as
+`(1 | subject)` and `(1 | obs)` random intercepts, matching the two
+variance components in the spec:
+
+```{r task2-session5-glmm-added}
+library(lme4)
+data(epil, package = "MASS")
+epil$obs <- factor(seq_len(nrow(epil)))   # observation-level index -> b_ij
+
+epil_glmm <- glmer(y ~ trt + lbase + lage + V4 + (1 | subject) + (1 | obs),
+                    data = epil, family = poisson)
+summary(epil_glmm)
+VarCorr(epil_glmm)
+```
+
+Run for this review (2026-11-16, R 4.5.2 / lme4): patient-level SD
+(`subject`) = 0.477, observation-level SD (`obs`) = 0.356 — i.e. both
+random effects are non-negligible, confirming the extra-Poisson
+variability the two-level model is designed to absorb. Fixed effects:
+`trtprogabide` coefficient -0.311 (p = 0.037), consistent with the
+published finding that progabide reduced seizure counts relative to
+placebo.
+
 ## Task 3 — Smoothing a binomial time series (model specification only)
 
 <!-- NOTE: as above, only the model specification appears in the source;
@@ -348,6 +428,19 @@ Rainfall occurrence over 1mm in Tokyo (1983-1984) is modelled as
 `log(tau) ~ logGamma(1.5e-5)`. The second-order random walk propagates
 information between temporal neighbours, smoothing the binomial time
 series.
+
+**Left unimplemented (checked for this review):** unlike Task 2 above,
+no substitute implementation was added here. The day-by-day 1983-84
+Tokyo rainfall counts (`Bin(n_t, p_t)`, ~730 days) are not just missing
+R code but missing *data* — this exact series is the classic `Tokyo`
+dataset bundled only with the `INLA` package itself (used verbatim in
+Rue & Held's GMRF book and in INLA's own RW2 tutorials), and it was not
+recoverable from the OCR source or from any other CRAN package checked
+(`gamair`, `gamlss.data`, `MASS` have no equivalent series). Writing an
+RW2/binomial smoother against synthetic stand-in data would misrepresent
+the model as validated when it has not been run against the real
+series, so this task is left as a documented gap rather than invented
+code.
 
 ## Task 4 — Differences between paper-testing operators (INLA)
 

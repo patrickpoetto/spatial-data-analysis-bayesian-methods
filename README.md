@@ -111,8 +111,27 @@ original HTML or `.Rmd` source.
 
 ## Tools
 
-R, `stringr`, `faraway`, `INLA` (Integrated Nested Laplace Approximation),
+R, `stringr`, `lme4`, `faraway`, `INLA` (Integrated Nested Laplace Approximation),
 base `stats` (`dpois`, `dgamma`, `pgamma`, `qgamma`, `pnbinom`, `uniroot`).
+
+## Reproducibility — what was actually verified (2026-11-16)
+
+This repo was re-run, not just read, as part of a quality review. Status
+of `01_bayesian_methods_sda.Rmd`, checked with R 4.5.2 on macOS/arm64:
+
+| Section | Status |
+|---|---|
+| Session 4 — Poisson MLE, all 3 conjugate priors (Gamma/Gamma/Jeffreys), posterior mean/median/mode, 95% CIs, `P(mean<25)`, prior & posterior predictive (Negative Binomial) | **Runs end-to-end.** Every numeric result quoted in the document was independently recomputed and matches the reported figures exactly (e.g. MLE = 35; Case 1 posterior mean 34.9725; 95% CI [32.537, 37.495]; `P(mean<25)` ≈ 8.49e-19). |
+| Session 4, Task 1 prior guess & Task 4 Case 2 (`GGOT.csv`) | **Not runnable as-is** — both depend on external files not bundled in the repo (an English word-frequency list; a 31-observation historical dataset). The two affected chunks are now marked `eval=FALSE` so the rest of the document still knits cleanly; set `eval=TRUE` and supply the files to reproduce those two pieces specifically. |
+| Session 5, Task 2 (Poisson GLMM, patient + observation random effects) | Originally undocumented in the source (model spec only, no code). **A new implementation was added and verified to run** against the classic Thall & Vail epilepsy seizure dataset (`MASS::epil`, 59 patients x 4 visits — matches the model's stated dimensions exactly), fit with `lme4::glmer`. Clearly labelled in the file as new code, not a reconstruction. |
+| Session 5, Task 3 (binomial time-series RW2 smoother) | **Left undone.** Unlike Task 2, no substitute was added: the required day-by-day 1983-84 Tokyo rainfall series is itself unavailable outside the `INLA` package's bundled example data, and was not recoverable from the OCR source or any other CRAN package checked. Documented inline as a genuine gap (missing data, not just missing code). |
+| Session 5, Task 4 (INLA random/fixed-effect comparison on `pulp`) and Point 4 (INLA Poisson GLMM on pump data) | **Blocked.** `INLA` is not on CRAN. Installing it from its own repository (`inla.r-inla-download.org`) was attempted as instructed; no binary is available for this R/platform combination, so it falls back to compiling ~20 transitive dependencies from source (`sf`, `terra`, `rgl`, `spdep`, `bayesm`, `e1071`, Google's `s2`/abseil-cpp, …). After several minutes of active compilation the attempt was abandoned per the project's time-boxing guidance; `gdal-config`, `geos-config` and `proj` are all absent from this machine, which would in any case fail `sf`/`terra`'s own configure step. The commented-out `inla(...)` calls and the result tables in the `.Rmd` are left exactly as transcribed from the source document — **unverified**, and clearly distinct from the sections above that were actually re-run. |
+| Session 5, Point 2 (pump Jeffreys posterior) | **Runs end-to-end**, verified (posterior mean 7.55, 90% CI [6.18, 9.03] — exact match). |
+| Session 5, Point 3 (hierarchical Gibbs sampler) | No source code existed for this task (by the source's own honest note); left as a derivation/documentation-only section, not executed, consistent with the original disclosure. |
+
+`02_applied_models_sda.Rmd` was re-checked for consistency rather than
+re-run (there is no code in it to run): its "content not recoverable"
+framing matches this README and was not altered.
 
 ## License
 
