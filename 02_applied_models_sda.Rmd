@@ -1,0 +1,63 @@
+---
+title: "Applied Models (Assignment 3) — Spatial Data Analysis course"
+author: "Corrà (5206191), Poetto (5201214), Shaboian (5217162), Bottino (5205740)"
+date: "2024-03-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Source-recovery note — body content could not be reconstructed
+
+This deliverable's source file ("6.1 - Spatial Data Analysis - Applied
+Models.html", a knitted/self-contained R Markdown HTML report) was
+supplied for this migration as a ~1 MB raw-text extraction. That
+extraction was read in full (988,622 characters / 4,179 lines, 100%).
+
+**Finding:** the extracted text contains *only* the HTML document's
+`<head>` boilerplate — the inlined jQuery, Bootstrap CSS, highlight.js /
+pagedtable, and Leaflet + Leaflet.markercluster JavaScript libraries that
+`rmarkdown::render(..., self_contained = TRUE)` embeds in every knitted
+report — and it is truncated mid-function before the `<body>` of the
+document (the actual title, author block, narrative, R code chunks,
+tables, and figures) ever begins. Confirmed by exhaustive search: the
+extraction contains zero occurrences of ordinary report vocabulary such
+as "Introduction", "spatial", "kriging", "variogram", "Moran",
+"ggplot", "Figure", "summary(", or any `<h1>`/heading text — only
+library source code and two metadata `<meta>` tags:
+
+- `title`: "Assignment 3"
+- `author`: "Corrà - 5206191, Poetto - 5201214, Shaboian - 5217162, Bottino - 5205740"
+- `date`: "2024-03-07"
+
+Because the actual report text and code were never present in the
+supplied extraction, **no analysis, model, or R code for this
+deliverable has been fabricated here** — doing so would misrepresent
+work that cannot be verified against the source.
+
+### What can be inferred (clearly flagged as inference, not recovered content)
+
+The only non-metadata signal in the extraction is the presence of the
+**Leaflet** and **Leaflet.markercluster** JavaScript bundles, which the
+`leaflet` R package injects into a knitted HTML page only when the
+report actually renders an interactive Leaflet map. This suggests (but
+does not confirm) that "Applied Models" included an interactive
+point/cluster map as part of its spatial data analysis — consistent with
+the course name ("Spatial Data Analysis") and with this being a
+companion/applied deliverable to `01_bayesian_methods_sda.Rmd` (same
+author group, same module, four days later: 2024-03-07 vs. 2024-03-03).
+
+### To recover the real content
+
+Re-export the original file from Google Drive as HTML and either:
+
+1. Open it in a browser and use "Save Page As -> Webpage, HTML only" or
+   print-to-PDF the rendered page (not the raw source), or
+2. If the original `.Rmd` source is still available, extract text from
+   that directly instead of the knitted HTML output.
+
+Once recovered, this file should be replaced with the actual
+reconstructed R Markdown content, following the same formatting
+conventions used in `01_bayesian_methods_sda.Rmd`.

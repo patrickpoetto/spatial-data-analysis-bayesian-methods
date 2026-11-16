@@ -1,0 +1,534 @@
+---
+title: "Bayesian Methods for Spatial Data Analysis — Sessions 4-5"
+subtitle: "Spatial Data Analysis course"
+author: "Corrà (5206191), Poetto (5201214), Shaboian (5217162), Bottino (5205740)"
+date: "2024-03-03"
+output: html_document
+---
+
+<!--
+  Reconstructed from a raw OCR/text extraction of the original PDF
+  ("6 - Spatial Data Analysis - Bayesian Methods for SDA.pdf").
+  The extraction broke up operators, underscores, LaTeX math and code
+  in unpredictable ways (e.g. "\<-", "\_", "\!", mis-split fractions).
+  Code below has been reflowed into valid, runnable R and reformatted
+  for readability. Narrative sections are condensed paraphrases of the
+  original report; all numeric results (MLE, posterior moments,
+  credible intervals, probabilities) are reproduced exactly as they
+  appeared in the source document.
+
+  Any fragment for which the source text did not contain an actual R
+  code chunk (only a mathematical model specification) is left as a
+  commented model specification rather than invented code, and is
+  explicitly flagged with "NOTE: no code chunk in source".
+-->
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(stringr)   # str_count() used in Task 1
+# library(INLA)    # required for Session 5, Task 4 and Task 5 (Point 4)
+```
+
+# Session 4 — Inference on "Game of Thrones"
+
+## Task 1 — Model specification
+
+The variable of interest, `X`, is the number of occurrences of the letter
+"u" on a page of *A Game of Thrones*. Counting processes of this kind are
+naturally modelled with a Poisson likelihood:
+
+\[ X_i \sim \text{Poisson}(\lambda), \quad i = 1, \dots, 16 \]
+
+with `P(X = x | lambda) = exp(-lambda) * lambda^x / x!`, `lambda > 0`
+representing the mean number of "u"s per page.
+
+To build an informed prior guess, the empirical frequency of the letter
+"u" was estimated from a reference English word list (source:
+<http://www.wordfrequency.info/>), restricted to words of plausible novel
+vocabulary length (3 to 8 letters):
+
+```{r task1-prior-guess}
+# `words` is assumed to be a data frame with a `word` column, loaded from
+# the word-frequency source referenced in the report. It is NOT bundled
+# in this repository (external dataset, not recoverable from the OCR
+# source) -- substitute your own English word-frequency list to reproduce.
+f_words <- subset(words, nchar(word) >= 3 & nchar(word) <= 8)
+
+total_u <- sum(str_count(f_words$word, "u"))
+nrow(words) / total_u
+## [1] 6.812303
+```
+
+On average there is one "u" roughly every seven letters-worth of words.
+With ~30 lines of ~8 words per page, this gives a rough prior guess for
+`lambda` of `30 * 8 / 7 ≈ 34`, i.e. somewhere between 30 and 40.
+
+## Task 2 — Data collection
+
+Each group member counted the number of "u"s on one page from the Preface
+of each of the first four books of the saga (16 observations total):
+
+```{r task2-data}
+book_df <- data.frame(
+  "Book_Number"   = c(1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4),
+  "Number_of_us"  = c(37, 46, 36, 29, 30, 38, 27, 40, 45, 37, 41, 37,
+                       30, 26, 30, 31)
+)
+```
+
+## Task 3 — Likelihood construction
+
+```{r task3-likelihood}
+likelihood_poisson <- function(lambda) {
+  prod(dpois(book_df$Number_of_us, lambda))
+}
+lambda_values     <- seq(15.05, 45, by = 0.05)   # range of candidate lambdas
+likelihood_values <- sapply(lambda_values, likelihood_poisson)
+
+loglik_poisson <- function(lambda) {
+  sum(log(dpois(book_df$Number_of_us, lambda)))
+}
+loglik_values <- sapply(lambda_values, loglik_poisson)
+
+mle_lambda <- lambda_values[which.max(likelihood_values)]
+mle_lambda
+## [1] 35
+```
+
+The MLE (35) matches the sample mean of the data, as expected for a
+Poisson model.
+
+```{r task3-plot}
+plot(lambda_values, likelihood_values, type = "l",
+     xlab = expression(lambda), ylab = "Likelihood",
+     main = "Likelihood for Poisson distribution")
+abline(v = mle_lambda, lty = 2)
+```
+
+## Task 4 — Three prior specifications
+
+### Case 1 — Informative conjugate Gamma prior
+
+The conjugate prior for a Poisson likelihood is a Gamma distribution,
+`Gamma(a, b)` with mean `a/b` and variance `a/b^2`. Using the rough prior
+guess of 35 +/- 6 (mean 35, sd ~2.4, i.e. variance ~6):
+
+```{r task4-case1}
+# a/b = 35 ; a/b^2 = 6  =>  b = 35/6, a = 35*b
+alpha_prior_1 <- 204.15   # a = 35^2 / 6
+beta_prior_1  <- 5.85     # b = 35 / 6
+
+alpha_posterior_1 <- alpha_prior_1 + sum(book_df$Number_of_us)
+beta_posterior_1  <- beta_prior_1  + length(book_df$Number_of_us)
+```
+
+```{r task4-case1-plot}
+curve(dgamma(x, shape = alpha_prior_1, rate = beta_prior_1), from = 15, to = 45,
+      xlab = expression(lambda), ylab = "Density",
+      main = "Gamma Prior (a = 204.15, b = 5.85)")
+```
+
+### Case 2 — Conjugate Gamma prior informed by external data
+
+A second, more uncertain, Gamma prior was built from an external dataset
+(`GGOT.csv`, 31 observations of "u" counts per page, collected at the 2nd
+Valencia International Bayesian Summer School, July 2018):
+
+```{r task4-case2-data}
+# External file referenced in the source report, not bundled here.
+got <- read.csv("GGOT.csv")
+summary(got)
+## Us
+## Min.   :15.00
+## 1st Qu.:27.50
+## Median :31.00
+## Mean   :33.03
+## 3rd Qu.:36.50
+## Max.   :62.00
+
+var(got$Us)
+## [1] 99.16559
+```
+
+Given the larger observed variance (~99 vs. the ~6 assumed in Case 1), a
+wider, more uninformative Gamma prior was chosen, keeping mean/variance
+proportionally consistent with Case 1's reasoning (variance scaled up to
+30, half the previous informativeness ratio):
+
+```{r task4-case2}
+# a/b = 30 ; a/b^2 = 30  =>  a = 30, b = 1
+alpha_prior_2 <- 30
+beta_prior_2  <- 1
+
+alpha_posterior_2 <- alpha_prior_2 + sum(book_df$Number_of_us)
+beta_posterior_2  <- beta_prior_2  + length(book_df$Number_of_us)
+```
+
+### Case 3 — Jeffreys' non-informative prior
+
+For a Poisson likelihood, Jeffreys' prior is derived from the expected
+Fisher information `I(lambda) = n / lambda`, giving:
+
+\[ p_J(\lambda) \propto \lambda^{-1/2} \]
+
+```{r task4-case3}
+jeffreys <- function(lambda) 1 / sqrt(lambda)
+prior_3  <- jeffreys(lambda_values)
+```
+
+Combining this prior with the Poisson likelihood yields a Gamma posterior
+kernel `lambda^(sum(x) - 1/2) * exp(-n*lambda)`, i.e.
+`lambda | x ~ Gamma(sum(x) + 1/2, n)`:
+
+```{r task4-case3-posterior}
+# Posterior parameters derived analytically from the stated posterior
+# form Ga(1/2 + sum(x_i), n); the extracted source text did not contain
+# an explicit R assignment for these two objects, so they are
+# reconstructed here directly from the analytic result shown in the
+# report (see Task 5.1 derivation below).
+alpha_posterior_3 <- 0.5 + sum(book_df$Number_of_us)
+beta_posterior_3  <- length(book_df$Number_of_us)
+```
+
+## Task 5 — Posterior analysis
+
+### 5.1 Analytical posterior derivation
+
+For `Y_1, ..., Y_n | theta ~iid Poisson(theta)` and `theta ~ Gamma(a, b)`,
+the posterior is again Gamma:
+
+\[ \theta \mid Y \sim \text{Gamma}\Big(a + \sum_{i=1}^{n} y_i,\; b + n\Big) \]
+
+so the posterior mean is a precision-weighted average of the prior mean
+and the sample mean:
+
+\[ E(\theta \mid Y) = \frac{b}{b+n}\,E[\theta] + \frac{n}{b+n}\,\bar y \]
+
+For the Jeffreys prior (`p(theta) propto theta^-1/2`) the same algebra gives
+`theta | Y ~ Gamma(1/2 + sum(y_i), n)`, used above for Case 3.
+
+```{r task5-posteriors}
+alpha_posterior_1 <- alpha_prior_1 + sum(book_df[, 2])
+beta_posterior_1  <- beta_prior_1  + length(book_df[, 2])
+mean_post_1 <- alpha_posterior_1 / beta_posterior_1
+mode_post_1 <- (alpha_posterior_1 - 1) / beta_posterior_1
+
+posteriordens_1 <- dgamma(lambda_values, shape = alpha_posterior_1, rate = beta_posterior_1)
+priordens_1     <- dgamma(lambda_values, shape = alpha_prior_1,     rate = beta_prior_1)
+
+#### Median approximation, since the Gamma median has no closed form ####
+shape <- alpha_posterior_1
+rate  <- beta_posterior_1
+gamma_cdf <- function(x) pgamma(x, shape, rate) - 0.5
+median_approx_1 <- uniroot(gamma_cdf, c(0, 100))$root
+```
+
+Point estimates (mean / median / mode) for the three cases, as reported:
+
+| | Mean | Median | Mode |
+|---|---|---|---|
+| Case 1 | 34.9725 | 34.9573 | 34.9268 |
+| Case 2 | 34.7059 | 34.6863 | 34.6471 |
+| Case 3 | 35.0312 | 35.0104 | 34.9688 |
+
+The three cases agree closely: with 16 data points, the likelihood
+dominates the posterior regardless of the (mildly) different priors.
+
+### 5.3 95% credible intervals
+
+```{r task5-ci}
+lower_1 <- qgamma(0.025, shape = alpha_posterior_1, rate = beta_posterior_1)
+upper_1 <- qgamma(0.975, shape = alpha_posterior_1, rate = beta_posterior_1)
+lower_2 <- qgamma(0.025, shape = alpha_posterior_2, rate = beta_posterior_2)
+upper_2 <- qgamma(0.975, shape = alpha_posterior_2, rate = beta_posterior_2)
+lower_3 <- qgamma(0.025, shape = alpha_posterior_3, rate = beta_posterior_3)
+upper_3 <- qgamma(0.975, shape = alpha_posterior_3, rate = beta_posterior_3)
+
+## 95% CI, case 1: 32.53654 - 37.49522
+## 95% CI, case 2: 31.96157 - 37.56161
+## 95% CI, case 3: 32.19077 - 37.99011
+```
+
+### 5.4 Posterior probability that the mean is below 25
+
+```{r task5-prob25}
+prob25_1 <- pgamma(25, shape = alpha_posterior_1, rate = beta_posterior_1)
+prob25_2 <- pgamma(25, shape = alpha_posterior_2, rate = beta_posterior_2)
+prob25_3 <- pgamma(25, shape = alpha_posterior_3, rate = beta_posterior_3)
+
+## P(mean < 25), case 1: 8.489044e-19
+## P(mean < 25), case 2: 2.331657e-14
+## P(mean < 25), case 3: 2.215395e-14
+```
+
+All three posteriors are tightly concentrated around 35, so the
+probability of the mean being below 25 is numerically negligible in
+every case.
+
+### 5.5 Prior and posterior predictive distributions
+
+Marginalising the Poisson likelihood over a Gamma(a, b) prior/posterior
+for `lambda` gives a Negative Binomial predictive distribution for a new
+observation `x_new`:
+
+\[ p(x_{new}) \sim \text{NegBin}(a, \, b/(b+1)) \]
+\[ p(x_{new} \mid x) \sim \text{NegBin}\Big(a + \textstyle\sum x_i,\; \frac{n+b}{n+b+1}\Big) \]
+
+```{r task5-predictive-prior}
+b_pri_1 <- beta_prior_1 / (beta_prior_1 + 1)
+b_pri_2 <- beta_prior_2 / (beta_prior_2 + 1)
+b_pri_3 <- 1e-10   # Jeffreys prior treated as the b -> 0 limit (improper prior)
+
+pricdf_1 <- pnbinom(30, size = alpha_prior_1, prob = b_pri_1) -
+            pnbinom(20, size = alpha_prior_1, prob = b_pri_1)
+pricdf_2 <- pnbinom(30, size = alpha_prior_2, prob = b_pri_2) -
+            pnbinom(20, size = alpha_prior_2, prob = b_pri_2)
+pricdf_3 <- pnbinom(30, size = 0.5, prob = b_pri_3) -
+            pnbinom(20, size = 0.5, prob = b_pri_3)
+
+## P(20 <= x <= 30), prior predictive, case 1: 0.2440179
+## P(20 <= x <= 30), prior predictive, case 2: 0.4499697
+## P(20 <= x <= 30), prior predictive, case 3: 1.12e-05
+```
+
+```{r task5-predictive-posterior}
+a_negbin_1 <- sum(book_df[, 2]) + alpha_prior_1
+a_negbin_2 <- sum(book_df[, 2]) + alpha_prior_2
+a_negbin_3 <- sum(book_df[, 2]) + 0.5
+
+b_negbin_1 <- (length(book_df[, 2]) + beta_prior_1) /
+              ((length(book_df[, 2]) + beta_prior_1) + 1)
+b_negbin_2 <- (length(book_df[, 2]) + beta_prior_2) /
+              ((length(book_df[, 2]) + beta_prior_2) + 1)
+b_negbin_3 <- length(book_df[, 2]) / (length(book_df[, 2]) + 1)
+
+cdf_1 <- pnbinom(25, size = a_negbin_1, prob = b_negbin_1); post_prob1 <- 1 - cdf_1
+cdf_2 <- pnbinom(25, size = a_negbin_2, prob = b_negbin_2); post_prob2 <- 1 - cdf_2
+cdf_3 <- pnbinom(25, size = a_negbin_3, prob = b_negbin_3); post_prob3 <- 1 - cdf_3
+
+## P(x > 25), posterior predictive, case 1: 0.9471974
+## P(x > 25), posterior predictive, case 2: 0.9413702
+## P(x > 25), posterior predictive, case 3: 0.9468403
+```
+
+---
+
+# Session 5
+
+## Task 2 — Poisson GLMM for seizure counts (model specification only)
+
+<!-- NOTE: the source document presents only the mathematical model for
+     this task; no R code chunk was present in the extracted text. -->
+
+```
+y_ij ~ Poisson(lambda_ij),  i = 1..59 patients, j = 1..4 visits
+log(lambda_ij) = k_i' * beta + a_i + b_ij
+a_i  ~ N(0, tau_a^-1)        # individual-level random effect
+b_ij ~ N(0, tau_b^-1)        # observation-level random effect
+beta ~ N(0, tau_beta^-1),    tau_beta known
+tau_a ~ Gamma(c1, c2)
+tau_b ~ Gamma(d1, d2)
+```
+
+A mixed-effects Poisson regression with an individual-level random
+effect (`a_i`) and an observation-level random effect (`b_ij`), both
+Gamma-precision hyperpriors — represented as a directed acyclic graph
+distinguishing founder parameters, deterministic/stochastic functions of
+them, and observed data.
+
+## Task 3 — Smoothing a binomial time series (model specification only)
+
+<!-- NOTE: as above, only the model specification appears in the source;
+     no R code chunk was recovered. -->
+
+Rainfall occurrence over 1mm in Tokyo (1983-1984) is modelled as
+`Bin(n_t, p_t)` with a logit link `p_t = exp(eta_t) / (1 + exp(eta_t))`,
+`eta_t = f_t`, where `f_t` follows a second-order random walk
+(`Delta^2 f_i = f_i - 2*f_{i+1} + f_{i+2} ~ N(0, tau^-1)`), with hyperprior
+`log(tau) ~ logGamma(1.5e-5)`. The second-order random walk propagates
+information between temporal neighbours, smoothing the binomial time
+series.
+
+## Task 4 — Differences between paper-testing operators (INLA)
+
+Data: the `pulp` dataset (brightness measurements of paper pulp, 4
+samples per operator) from the **faraway** R package.
+
+```{r task4-session5-model}
+# formula <- data$bright ~ f(data$operator, model = "iid")
+# result  <- inla(formula, family = "gaussian", data = data)
+```
+
+Random-effect model (operators as exchangeable draws from a shared
+population):
+
+```
+y_i = beta_0 + u_i + epsilon_i
+```
+
+| | mean | sd | 0.025 | 0.5 | 0.975 | mode |
+|---|---|---|---|---|---|---|
+| Intercept | 60.4 | 0.088 | 60.225 | 60.4 | 60.575 | 60.4 |
+
+| | mean | sd | 0.025 | 0.5 | 0.975 | mode |
+|---|---|---|---|---|---|---|
+| Precision, Gaussian obs. | 6.997 | 2.181 | 3.559 | 6.713 | 12.055 | 6.198 |
+| Precision, random effect | 21830.962 | 24044.904 | 1420.362 | 14271.159 | 85667.301 | 3855.380 |
+
+The random-effect precision is orders of magnitude larger than the
+residual precision, implying negligible variability between operators —
+consistent with a fixed-effects comparison (below) that nonetheless
+shows statistically distinguishable operator effects.
+
+### Model comparison: random effect vs. fixed effect (dummy variables)
+
+| | mean | sd | 0.025 | 0.5 | 0.975 | mode |
+|---|---|---|---|---|---|---|
+| Intercept | 60.68 | 0.1442 | 60.3941 | 60.68 | 60.9658 | 60.68 |
+| Operator a | -0.44 | 0.2039 | -0.8443 | -0.44 | -0.0357 | -0.44 |
+| Operator b | -0.62 | 0.2039 | -1.0242 | -0.62 | -0.2157 | -0.62 |
+| Operator c | -0.06 | 0.2039 | -0.4643 | -0.06 | 0.3443 | -0.06 |
+
+(operator d is the reference level)
+
+| Model | DIC | WAIC |
+|---|---|---|
+| Random effect | 22.6750 | 22.3907 |
+| Dummy variable (fixed effect) | 17.7336 | 18.1623 |
+
+Lower DIC/WAIC favour the fixed-effect model, but this contradicts the
+exchangeability assumption behind the random-effects formulation, so the
+simplification should be adopted cautiously.
+
+## Task 5 — Machine (pump) failure analysis
+
+Data: classic 10-pump failure/lifetime dataset.
+
+```{r task5-session5-data}
+failure  <- c(5, 1, 5, 14, 3, 19, 1, 1, 4, 22)
+lifetime <- c(94.5, 15.7, 62.9, 126, 5.2, 31.4, 1, 1, 2.1, 10.5)
+data <- data.frame(id = seq_along(failure), failure = failure, lifetime = lifetime)
+```
+
+### Point 1 — Poisson regression framing
+
+```
+y_i ~ Poisson(exp(X_i %*% beta))
+log(lambda_i) = beta_0 + beta_1 * maintenance_frequency_i + beta_2 * operating_pressure_i - log(u_i)
+```
+
+where `log(u_i)` is an **offset** correcting for each pump's differing
+exposure time. Overdispersion (variance > mean) is discussed as a
+limitation of the plain Poisson model, addressed either via a Gamma/
+log-normal mixture of Poisson rates or via a Poisson GLMM with an
+observation-level random effect.
+
+### Survival-analysis background (conceptual, no code in source)
+
+The report also surveys survival-analysis formalism applicable to
+recurrent pump failures: the survivor function `S(t) = 1 - F(t)`, the
+hazard function `h(t) = f(t)/S(t)`, the Cox proportional-hazards model
+`lambda(t|x) = lambda_0(t) * exp(beta' x)`, and two extensions suited to
+*recurrent* events — the **Andersen-Gill** proportional-intensity model
+and the **Prentice-Williams-Peterson (PWP) total-time** model, which
+stratifies the baseline hazard by event order.
+
+### Point 2 — Uniparametric Bayesian model with Jeffreys' prior
+
+```{r task5-point2}
+alpha_post <- sum(failure) + 0.5
+beta_post  <- length(failure)
+
+possible_lambdas  <- seq(0.1, 15, by = 0.01)
+prior_unipar       <- 1 / sqrt(possible_lambdas)                               # Jeffreys prior
+posterior_unipar   <- dgamma(possible_lambdas, shape = alpha_post, rate = beta_post)
+
+mean_val <- alpha_post / beta_post
+cred_int <- c(
+  qgamma(0.05,   shape = alpha_post, rate = beta_post),
+  qgamma(1 - 0.05, shape = alpha_post, rate = beta_post)
+)
+## Posterior mean: 7.55
+## 95% credible interval: [6.18, 9.03]
+```
+
+### Point 3 — Bayesian hierarchical model across the 10 pumps
+
+<!-- NOTE: the source document provides the full mathematical derivation
+     of the hierarchical model and its Gibbs-sampler full conditionals,
+     but no executable R code. The model specification and derived full
+     conditionals are reproduced below as documentation, not as
+     runnable code, to avoid misrepresenting content that was never
+     implemented in the original source. -->
+
+```
+x_j | lambda_j ~ Poisson(lambda_j * t_j),  j = 1..10
+lambda_j       ~ Gamma(alpha, beta)
+alpha          ~ Exponential(0.01)
+beta           ~ Exponential(0.01)
+```
+
+Derived full conditionals (for a Gibbs sampler):
+
+```
+lambda_j | ...  ~ Gamma(alpha + x_j, beta + 1)
+beta     | ...  ~ Gamma(alpha + 1, sum(lambda_j) + 0.01)
+alpha    | ...  : no closed-form full conditional -> requires a
+                  Metropolis-Hastings step within the Gibbs sampler.
+```
+
+This hierarchical structure lets each pump borrow statistical strength
+from the other pumps ("shrinkage") while still allowing plant-specific
+failure rates to differ (an *exchangeability* assumption).
+
+### Point 4 — Poisson GLMM via INLA, with exposure offset
+
+```{r task5-point4}
+# pois_fit <- inla(failure ~ f(id, model = 'iid'), data = data,
+#                   family = "poisson", E = lifetime)
+# inla.pmarginal(0, pois_fit$marginals.fixed$`(Intercept)`)
+## [1] 0.9933629
+```
+
+| | mean | sd | 0.025 | 0.5 | 0.975 | mode |
+|---|---|---|---|---|---|---|
+| Intercept | -1.185 | 0.451 | -2.086 | -1.185 | -0.291 | -1.185 |
+
+| | mean | sd | 0.025 | 0.5 | 0.975 | mode |
+|---|---|---|---|---|---|---|
+| Precision for id | 0.76 | 0.389 | 0.23 | 0.685 | 1.719 | 0.547 |
+
+`P(beta_0 < 0) = 0.9934`, i.e. strong posterior evidence for a negative
+intercept (failures per unit lifetime below 1), with substantial
+estimated variability between plants (low random-effect precision).
+
+### Point 5 — Graphical model representations
+
+The hierarchical model and the GLMM are each represented as directed
+graphical models, distinguishing founder parameters (e.g. `alpha`,
+`tau`), deterministic/stochastic functions of parameters, and the
+observed data nodes — mirroring the notation used throughout the course
+for visualising Bayesian model structure.
+
+---
+
+## References (as cited in the original report)
+
+- Andersen, P. K., & Gill, R. D. (1982). *Cox's Regression Model for
+  Counting Processes: A Large Sample Study.* The Annals of Statistics.
+- Draper, D., Hodges, J. S., Mallows, C. L., & Pregibon, D. (1993).
+  *Exchangeability and Data Analysis.* JRSS A.
+- Gelman, A., Carlin, J. B., Stern, H. S., Dunson, D. B., Vehtari, A., &
+  Rubin, D. B. (2013). *Bayesian Data Analysis.* CRC Press.
+- Gelman, A., Hill, J., & Vehtari, A. (2020). *Regression and Other
+  Stories.* Cambridge University Press.
+- Gómez-Rubio, V. (2020). *Bayesian Inference with INLA.* CRC Press.
+- Jenkins, S. P. (2005). *Survival Analysis.* University of Essex.
+- Liu, X. (2012). *Survival Analysis: Models and Applications.* Wiley.
+- Midway, S. (2022). *Data Analysis in R.* Bookdown.
+- Prentice, R. L., Williams, B. J., & Peterson, A. V. (1981). *On the
+  Regression Analysis of Multivariate Failure Time Data.* Biometrika.
+- Rosner, G. L., Laud, P. W., & Johnson, W. O. (2021). *Bayesian
+  Thinking in Biostatistics.* CRC Press.
+- Yang, W., et al. (2017). *Statistical Methods for Recurrent Event
+  Analysis in Cohort Studies of CKD.* CJASN.
